@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "隐藏官方工具",
-    "description": "严格 OPS 接管；替代能力或宿主隐藏 API 不完整时，拒绝组装智能体提示词。"
+    "description": "只隐藏 shell/file/ptc 三面中已有 OPS 等价物的官方工具；其余官方工具保留可见，并由一条警告逐个点名。仅当 additionalOfficialTools 显式要求隐藏却无等价物时才拒绝。"
   }
 }

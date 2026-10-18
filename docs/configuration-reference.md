@@ -104,6 +104,55 @@ config:
 
 ---
 
+## Strict official-tool hiding (`dsh-ops/hide-official`)
+
+The row is inserted **disabled**; enabling it is an operator decision. It accepts
+exactly `strict`, `scope` and `additionalOfficialTools`, and rejects any other key
+by name.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `strict` | boolean | `true` | Must be `true`. Disable the row to restore the host tools; there is no `strict: false`. |
+| `scope` | `takeover` \| `extended` \| `off` | `takeover` | How wide the takeover is. `takeover` (default) is the reviewed shell/file/ptc scope and preserves the existing behaviour exactly; `extended` is that scope plus every name in `additionalOfficialTools`; `off` takes over nothing at all (no hiding, no warning, no readiness gate). |
+| `additionalOfficialTools` | string[] | `[]` | Extra official names (for example `custom_delegate`). Inside the scope, a name with no reviewed equivalent fails closed with both ways out. Outside the scope, `takeover` warns about it and ignores it, `extended` promotes it into the scope, and `off` ignores it silently. |
+
+The reviewed scope — the default and the previous behaviour, so `scope` can be omitted:
+
+```yaml
+- name: dsh-ops/hide-official
+  config:
+    strict: true
+    scope: takeover          # default; may be omitted
+    additionalOfficialTools: []
+```
+
+Promote an out-of-scope official tool so `strict` really covers it. Without a
+reviewed equivalent the scope fails closed at assembly and names the fix:
+
+```yaml
+- name: dsh-ops/hide-official
+  config:
+    strict: true
+    scope: extended
+    additionalOfficialTools: [subagent]
+```
+
+Neutralize the row without deleting it (staged rollouts, profiles shared across machines):
+
+```yaml
+- name: dsh-ops/hide-official
+  config:
+    strict: true
+    scope: off
+```
+
+Which official tools are hidden, which stay visible, and why: the
+[component reference](component-reference.md#dsh-opshide-official--takeover-scope).
+Enabling the row never blocks a session for an out-of-scope tool: those stay
+visible and produce one warning that names them (#207/#238).
+
+---
+
 ## Prompt registration
 
 Prompts are registered as independent runtime sections, **not written to AGENTS.md**: shell OFF withdraws bash/pwsh routing; file OFF withdraws native file guidance. The file component uses its independent Rust worker. Four native file tools and `ops_bash` are added by default. These changes reduce fixed declaration costs. The Minimal preset overrides additional system sections; PTC mode calls the underlying tools through the SDK with unchanged permission gates.

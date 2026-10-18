@@ -2,8 +2,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { parse } from 'yaml'
 import { resolveHidingConfig } from '../lib/config.js'
-import { isOfficialTool, OFFICIAL_TOOL_NAMES, OFFICIAL_REPLACEMENTS, platformSurface } from '../lib/official-tool-catalog.js'
-import { classifyOfficialSurface, isHideable, surfaceWarning, TAKEOVER_SCOPE, takeoverFace } from '../lib/official-tool-hiding.js'
+import { isOfficialTool, OFFICIAL_TOOL_NAMES, OFFICIAL_TOOL_PREFIXES, OFFICIAL_REPLACEMENTS, platformSurface } from '../lib/official-tool-catalog.js'
+import {
+  classifyOfficialSurface, DEFAULT_TAKEOVER_MODE, isHideable, resolveTakeoverConfig, surfaceWarning,
+  TAKEOVER_MANIFEST, TAKEOVER_MODES, TAKEOVER_PREFIX_ROWS, TAKEOVER_SCOPE, TAKEOVER_SCOPE_ROWS,
+  takeoverEquivalent, takeoverFace, takeoverManifestRow,
+} from '../lib/official-tool-hiding.js'
 import { assert, PACKAGE_ROOT, report, test } from './lib/harness.mjs'
 import { officialToolHidingMountChecks, STOCK_UNSUPPORTED_48 } from './lib/official-tool-hiding.mjs'
 
@@ -63,6 +67,108 @@ await test('the takeover scope is exactly shell/file/ptc, and hiding needs a rev
   assert.equal(isHideable('subagent', 'win32'), false)
   // An alias cannot extend hiding outside the scope, even when it is official.
   assert.equal(isHideable('custom_delegate', 'linux'), false)
+})
+await test('the takeover manifest is complete, reasoned and the single source of the scope', () => {
+  // Every row is an explicit triple: official tool -> face -> equivalent -> reason.
+  for (const row of TAKEOVER_MANIFEST) {
+    assert.equal(typeof row.tool, 'string', JSON.stringify(row))
+    assert.equal(typeof row.prefix, 'boolean')
+    assert.equal(typeof row.reason, 'string')
+    assert.ok(row.reason.length > 20, `${row.tool} carries a real reason`)
+    if (row.prefix) {
+      assert.equal(row.face, null, `${row.tool} is a prefix and cannot own a face`)
+      assert.equal(row.equivalent, null)
+    } else if (row.face === null) {
+      assert.equal(row.equivalent, null, `${row.tool} is outside the scope and must claim no equivalent`)
+    } else {
+      assert.ok(['shell', 'file', 'ptc'].includes(row.face), `${row.tool} has a takeover face`)
+    }
+    if (row.equivalent !== null) assert.equal(OFFICIAL_REPLACEMENTS[row.tool], row.equivalent)
+  }
+  // Complete over the pinned catalog: delete a row and this goes red rather than
+  // quietly narrowing the takeover or forgetting a "not taken over" annotation.
+  assert.deepEqual(TAKEOVER_SCOPE_ROWS.map(row => row.tool).sort(), [...OFFICIAL_TOOL_NAMES].sort())
+  assert.deepEqual(TAKEOVER_PREFIX_ROWS.map(row => row.tool), [...OFFICIAL_TOOL_PREFIXES])
+  assert.equal(new Set(TAKEOVER_MANIFEST.map(row => row.tool)).size, TAKEOVER_MANIFEST.length)
+  // The reviewed equivalence registry cannot drift away from the manifest either.
+  assert.deepEqual(TAKEOVER_SCOPE_ROWS.filter(row => row.equivalent !== null).map(row => row.tool).sort(),
+    Object.keys(OFFICIAL_REPLACEMENTS).sort())
+  // Scale, pinned: 11 in scope over shell/file/ptc, 52 explicitly not taken over, 2 prefixes.
+  assert.equal(TAKEOVER_SCOPE_ROWS.filter(row => row.face !== null).length, 11)
+  assert.equal(TAKEOVER_SCOPE_ROWS.filter(row => row.face === null).length, 52)
+  assert.equal(TAKEOVER_PREFIX_ROWS.length, 2)
+  assert.equal(takeoverEquivalent('read'), OFFICIAL_REPLACEMENTS.read)
+  assert.equal(takeoverEquivalent('write'), undefined)
+  assert.equal(takeoverManifestRow('subagent').face, null)
+  assert.match(takeoverManifestRow('subagent').reason, /delegation/iu)
+  assert.match(takeoverManifestRow('stagehand_').reason, /prefix/iu)
+})
+await test('the scope switch defaults to the F4 takeover scope and validates every value', () => {
+  assert.deepEqual([...TAKEOVER_MODES], ['takeover', 'extended', 'off'])
+  assert.equal(DEFAULT_TAKEOVER_MODE, 'takeover')
+  // A row without `scope` is the F4 config plus the safe default: unchanged behaviour.
+  assert.deepEqual(resolveTakeoverConfig(), { strict: true, additionalOfficialTools: [], scope: 'takeover' })
+  assert.deepEqual(resolveTakeoverConfig({ strict: true }), { strict: true, additionalOfficialTools: [], scope: 'takeover' })
+  for (const scope of TAKEOVER_MODES) {
+    assert.deepEqual(resolveTakeoverConfig({ scope, additionalOfficialTools: ['subagent'] }),
+      { strict: true, additionalOfficialTools: ['subagent'], scope })
+  }
+  for (const bad of ['strict', '', 'TAKEOVER', 'extend', 'on', true, 3, [], {}]) {
+    assert.throws(() => resolveTakeoverConfig({ scope: bad }), /scope must be one of/)
+  }
+  // The F4 keys keep their exact validation while `scope` is added.
+  assert.throws(() => resolveTakeoverConfig({ scope: 'takeover', strict: false }), /strict must be true/)
+  assert.throws(() => resolveTakeoverConfig({ scope: 'takeover', additionalOfficialTools: ['ops_read'] }), /additionalOfficialTools/)
+  assert.throws(() => resolveTakeoverConfig({ scope: 'takeover', required: true }), /unknown hiding key/)
+})
+await test('scope selects how far the takeover reaches: takeover ignores, extended promotes, off hides nothing', () => {
+  const names = ['read', 'glob', 'grep', 'write', 'subagent', 'pwsh', 'foreign']
+  const classify = config => classifyOfficialSurface(names, resolveTakeoverConfig(config), 'linux')
+
+  const takeover = classify({ additionalOfficialTools: ['subagent', 'write'] })
+  assert.equal(takeover.mode, 'takeover')
+  assert.deepEqual(takeover.hidden, ['glob', 'grep', 'read'])
+  assert.deepEqual(takeover.explicitOutOfScope, ['subagent'])
+  assert.deepEqual(takeover.explicitUnsupported, ['write'])
+  assert.match(surfaceWarning(classify({ additionalOfficialTools: ['subagent'] })),
+    /explicit additionalOfficialTools request for subagent is ignored/)
+
+  const extended = classify({ scope: 'extended', additionalOfficialTools: ['subagent', 'write'] })
+  assert.equal(extended.mode, 'extended')
+  assert.deepEqual(extended.hidden, ['glob', 'grep', 'read'])
+  assert.deepEqual(extended.explicitOutOfScope, [])
+  assert.deepEqual(extended.explicitUnsupported, ['subagent', 'write'])
+  assert.doesNotMatch(surfaceWarning(classify({ scope: 'extended', additionalOfficialTools: ['subagent'] })),
+    /is ignored/)
+
+  const off = classify({ scope: 'off', additionalOfficialTools: ['subagent', 'write'] })
+  assert.equal(off.mode, 'off')
+  assert.deepEqual(off.official, ['glob', 'grep', 'pwsh', 'read', 'subagent', 'write'])
+  for (const key of ['hidden', 'inScopeUnsupported', 'explicitUnsupported', 'outOfScope', 'explicitOutOfScope']) {
+    assert.deepEqual(off[key], [], `${key} stays empty under scope off`)
+  }
+  assert.equal(surfaceWarning(off), undefined)
+})
+await test('the component-reference scope table is the manifest, not a copy that can drift', () => {
+  const expected = TAKEOVER_MANIFEST.map(row => [
+    row.prefix ? `${row.tool}*` : row.tool,
+    row.face === null ? (row.prefix ? 'prefix' : 'outside') : row.face,
+    row.equivalent === null ? '—' : row.equivalent,
+  ])
+  for (const file of ['docs/component-reference.md', 'docs/组件参考.md']) {
+    const text = fs.readFileSync(path.join(PACKAGE_ROOT, file), 'utf8')
+    const block = /<!-- hide-official-scope:start -->([\s\S]*?)<!-- hide-official-scope:end -->/u.exec(text)
+    assert.ok(block, `${file} carries the marked scope table`)
+    const rows = []
+    for (const line of block[1].split('\n')) {
+      if (!line.trim().startsWith('|')) continue
+      const cells = line.split('|').map(cell => cell.trim())
+      const tool = cells[1]?.replaceAll('`', '')
+      if (!tool || /^-+$/u.test(tool) || ['Official tool', '官方工具'].includes(tool)) continue
+      rows.push([tool, cells[2]?.replaceAll('`', ''), cells[3]?.replaceAll('`', '')])
+    }
+    assert.deepEqual(rows, expected, `${file} lists exactly the manifest rows, in manifest order`)
+  }
 })
 await test('the reported 48-tool surface classifies without a fatal condition and keeps every out-of-scope tool', () => {
   // The #207 stock surface: 48 unsupported tools plus read/glob/grep (replaced)

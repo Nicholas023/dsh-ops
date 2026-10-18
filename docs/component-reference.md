@@ -11,7 +11,7 @@ What each of the six components publishes, with parameters and permission requir
 | `dsh-ops/ptc` | Independent Rust safe batches and bounded result references, only in pure PTC sessions | Off | `ops_batch`, `ops_result` |
 | `dsh-ops/panel` | Data capture, off at the switch: new conversations write `<cwd>/.dsh-ops/panel/<sessionId>.json` plus the viewer `panel.html` | Row on, `capture: false` | None; see the [configuration reference](configuration-reference.md) |
 | `dsh-ops/tui` | Read-only current-session OPS sidebar | Off | None; see [sidebar guide](tui-panel.md) |
-| `dsh-ops/hide-official` | Strict hiding of official tools that have reviewed OPS equivalents | Off | None |
+| `dsh-ops/hide-official` | Hides the reviewed shell/file/ptc official tools; every other official tool stays visible with a warning | Off | None |
 
 The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) has been removed. A profile row that still names it loads as a no-op: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
 
@@ -162,6 +162,110 @@ The routing table the model sees is rendered by the plugin from what it actually
 | General commands / builds / git / pipelines / scripts — preferred command executor | ops_bash |
 | Windows-native cmdlets / registry / services only | pwsh (bundled PowerShell 7 via host) |
 ```
+
+---
+
+## `dsh-ops/hide-official` — takeover scope
+
+Opt-in and **disabled by default**. `strict` means "inside the faces dsh-ops takes
+over, hide only what has a reviewed replacement" — it is not "no official tool may
+survive". The takeover is exactly three faces: **shell / file / ptc**.
+
+`Face` is `shell`, `file` or `ptc` (inside the takeover) or `outside` (a pinned
+official tool this component deliberately does not take over); `prefix` marks a
+dynamic official prefix. `—` in the equivalent column means no reviewed OPS
+equivalent is claimed. The table is generated from `TAKEOVER_MANIFEST` in
+`lib/official-tool-hiding.js`, and a test fails if the two drift apart.
+
+<!-- hide-official-scope:start -->
+| Official tool | Face | OPS equivalent | Why |
+| --- | --- | --- | --- |
+| `bash` | `shell` | — | Host command runner; `ops_bash` is the OPS executor |
+| `pwsh` | `shell` | — | Platform-retained host shell; never hidden |
+| `bash_persistent` | `shell` | — | Persistent host shell; `ops_bash` is stateless |
+| `pwsh_persistent` | `shell` | — | Persistent host shell; `ops_bash` is stateless |
+| `read` | `file` | `ops_inspect_local_file` | Reviewed OPS equivalent is registered |
+| `glob` | `file` | `ops_glob` | Reviewed OPS equivalent is registered |
+| `grep` | `file` | `ops_grep` | Reviewed OPS equivalent is registered |
+| `write` | `file` | — | No reviewed OPS equivalent claims the same semantics |
+| `edit` | `file` | — | No reviewed OPS equivalent claims the same semantics |
+| `str_replace_editor` | `file` | — | No reviewed OPS equivalent claims the same semantics |
+| `run_code` | `ptc` | — | PTC transport; never replaced |
+| `list_subagent_models` | `outside` | — | Host delegation, teams and messaging |
+| `subagent` | `outside` | — | Host delegation, teams and messaging |
+| `subagent_fork` | `outside` | — | Host delegation, teams and messaging |
+| `interrupt_agent` | `outside` | — | Host delegation, teams and messaging |
+| `list_agents` | `outside` | — | Host delegation, teams and messaging |
+| `send_message` | `outside` | — | Host delegation, teams and messaging |
+| `spawn_teammate` | `outside` | — | Host delegation, teams and messaging |
+| `wait_agent` | `outside` | — | Host delegation, teams and messaging |
+| `team_task_create` | `outside` | — | Host delegation, teams and messaging |
+| `team_task_get` | `outside` | — | Host delegation, teams and messaging |
+| `team_task_list` | `outside` | — | Host delegation, teams and messaging |
+| `team_task_update` | `outside` | — | Host delegation, teams and messaging |
+| `job_kill` | `outside` | — | Host background jobs; OPS never controls host job state |
+| `job_list` | `outside` | — | Host background jobs; OPS never controls host job state |
+| `job_output` | `outside` | — | Host background jobs; OPS never controls host job state |
+| `session_search` | `outside` | — | Host session history; observation only |
+| `session_trace` | `outside` | — | Host session history; observation only |
+| `session_event_read` | `outside` | — | Host session history; observation only |
+| `session_event_search` | `outside` | — | Host session history; observation only |
+| `session_event_trace` | `outside` | — | Host session history; observation only |
+| `list_mcp_resources` | `outside` | — | Host MCP resource layer |
+| `list_mcp_resource_templates` | `outside` | — | Host MCP resource layer |
+| `read_mcp_resource` | `outside` | — | Host MCP resource layer |
+| `terminal_open` | `outside` | — | Host terminal sessions; use `ops_bash` for commands |
+| `terminal_close` | `outside` | — | Host terminal sessions; use `ops_bash` for commands |
+| `terminal_list` | `outside` | — | Host terminal sessions; use `ops_bash` for commands |
+| `terminal_read` | `outside` | — | Host terminal sessions; use `ops_bash` for commands |
+| `terminal_send` | `outside` | — | Host terminal sessions; use `ops_bash` for commands |
+| `terminal_signal` | `outside` | — | Host terminal sessions; use `ops_bash` for commands |
+| `plan` | `outside` | — | Interactive host planning/approval surface |
+| `exit_plan_mode` | `outside` | — | Interactive host planning/approval surface |
+| `ask_user_question` | `outside` | — | Interactive host planning/approval surface |
+| `todo_write` | `outside` | — | Interactive host planning/approval surface |
+| `schedule_create` | `outside` | — | Host scheduling and goal bookkeeping |
+| `schedule_delete` | `outside` | — | Host scheduling and goal bookkeeping |
+| `schedule_list` | `outside` | — | Host scheduling and goal bookkeeping |
+| `schedule_update` | `outside` | — | Host scheduling and goal bookkeeping |
+| `create_goal` | `outside` | — | Host scheduling and goal bookkeeping |
+| `get_goal` | `outside` | — | Host scheduling and goal bookkeeping |
+| `update_goal` | `outside` | — | Host scheduling and goal bookkeeping |
+| `present` | `outside` | — | Host media read/present surface |
+| `read_image` | `outside` | — | Host media read/present surface |
+| `web_search` | `outside` | — | Host web access |
+| `web_fetch` | `outside` | — | Host web access |
+| `skill` | `outside` | — | Host skills, workflows and autonomous loops |
+| `workflow` | `outside` | — | Host skills, workflows and autonomous loops |
+| `ralph` | `outside` | — | Host skills, workflows and autonomous loops |
+| `plugin_manager` | `outside` | — | Host/plugin introspection and workspace dependencies |
+| `cordis_inspect_list` | `outside` | — | Host/plugin introspection and workspace dependencies |
+| `cordis_inspect_query` | `outside` | — | Host/plugin introspection and workspace dependencies |
+| `lsp` | `outside` | — | Host/plugin introspection and workspace dependencies |
+| `load_workspace_dependencies` | `outside` | — | Host/plugin introspection and workspace dependencies |
+| `stagehand_*` | `prefix` | — | Dynamic third-party/driver prefix |
+| `cua_driver_native__*` | `prefix` | — | Dynamic third-party/driver prefix |
+<!-- hide-official-scope:end -->
+
+What the table means in practice:
+
+- **Only rows with a reviewed equivalent are hidden at all**: `read` → `ops_inspect_local_file`, `glob` → `ops_glob`, `grep` → `ops_grep`.
+- **The platform-retained host shell is never hidden**: `pwsh` on Windows, `bash` elsewhere, even though it sits inside the shell face.
+- **Inside the taken-over faces but kept visible**: `write`, `edit`, `str_replace_editor`, `run_code` and the shell names other than the retained one. They are named in the warning and dispatch still works — hiding them without a replacement would create a mixed official/OPS surface.
+- **Outside the takeover**: every `outside` row and both dynamic prefixes. They stay visible and are listed in the same warning, which says they are outside `shell/file/ptc`. This is why a stock desktop profile can enable the row without a `READINESS_BLOCKED` failure (#207/#238).
+- **The one fail-closed case**: `additionalOfficialTools` names an in-scope tool that has no equivalent. `READINESS_BLOCKED (HIDING_REQUEST_UNSATISFIABLE)` names the tool and both ways out (remove the name, or disable the row).
+
+`scope` selects how wide the takeover is; the default `takeover` is the table above
+and keeps an existing row's behaviour unchanged:
+
+| `scope` | Hidden | `additionalOfficialTools` naming an `outside` tool | Warning |
+| --- | --- | --- | --- |
+| `takeover` (default) | rows with a reviewed equivalent | warned about and ignored | one aggregated warning |
+| `extended` | same | promoted into the takeover scope; with no equivalent the scope fails closed with the way out | one aggregated warning for the rest |
+| `off` | nothing | ignored silently | none, and no readiness gate either |
+
+Copy-paste rows for each mode are in the
+[configuration reference](configuration-reference.md#strict-official-tool-hiding-dsh-opshide-official).
 
 ---
 

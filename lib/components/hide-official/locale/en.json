@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Official tool hiding",
-    "description": "Strict OPS takeover; refuses agent prompt assembly when replacements or host hiding APIs are incomplete."
+    "description": "Hides the reviewed shell/file/ptc official tools that have an OPS equivalent; every other official tool stays visible with one warning naming it. Only an explicit additionalOfficialTools request with no equivalent fails closed."
   }
 }

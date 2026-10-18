@@ -357,4 +357,76 @@ export async function officialToolHidingMountChecks() {
       assert.ok(scopedToolNames(ctx, agent).includes('read'))
     } finally { await shutdown(ctx) }
   })
+  await test('scope off is inert: nothing hidden, no warning, and not even a host-API readiness gate', async () => {
+    {
+      const { ctx } = await bootHost()
+      try {
+        for (const name of ['read', 'glob', 'grep', ...STOCK_UNSUPPORTED_48]) ctx.tools.register(tool(name))
+        const warnings = warningsFrom(ctx)
+        await mount(ctx, { scope: 'off' })
+        const agent = await mint(ctx, 'scope-off')
+        const assembly = await assemble(ctx, agent)
+        const names = assembly.tools.map(schema => schema.name)
+        for (const name of ['read', 'glob', 'grep', 'write', 'edit', 'subagent', 'terminal_send']) {
+          assert.ok(names.includes(name), `${name} stays visible with scope off`)
+        }
+        assert.deepEqual([...scopedToolNames(ctx, agent)].sort(), [...names].sort())
+        assert.equal(warnings.filter(message => message.includes('dsh-ops hide-official')).length, 0)
+        assert.equal((await execute(ctx, agent, 'read')).isError, false)
+        assert.equal((await execute(ctx, agent, 'subagent')).isError, false)
+      } finally { await shutdown(ctx) }
+    }
+    {
+      // No restrict/guard host API either: an inert row must not gate the session.
+      const { ctx } = await bootHost({ withTools: false })
+      try {
+        ctx.provide('tools', { schemas: () => FILE_TOOLS.map(name => ({ name: publicToolName(name) })), get() {} })
+        const warnings = warningsFrom(ctx)
+        await mount(ctx, { scope: 'off' })
+        const agent = await mint(ctx, 'scope-off-no-host-api')
+        await assemble(ctx, agent)
+        assert.equal(warnings.filter(message => message.includes('dsh-ops hide-official')).length, 0)
+      } finally { await shutdown(ctx) }
+    }
+  })
+  await test('scope extended promotes an explicit out-of-scope request into the scope and fails closed with the way out', async () => {
+    const { ctx } = await bootHost()
+    try {
+      replacements(ctx)
+      for (const name of ['read', 'subagent', 'foreign']) ctx.tools.register(tool(name))
+      await mount(ctx, { scope: 'extended', additionalOfficialTools: ['subagent'] })
+      const agent = await mint(ctx, 'scope-extended')
+      let message
+      await assert.rejects(() => assemble(ctx, agent), error => { message = error.message; return true })
+      assert.match(message, /HIDING_REQUEST_UNSATISFIABLE/)
+      assert.match(message, /no registered OPS equivalent exists for subagent/)
+      assert.match(message, /remove "subagent" from additionalOfficialTools/)
+      assert.match(message, /disable the dsh-ops-hide-official row/)
+      // Fail-closed means no partial mask, and dispatch is refused while unready.
+      assert.ok(scopedToolNames(ctx, agent).includes('read'))
+      assert.equal((await execute(ctx, agent, 'foreign')).isError, true)
+    } finally { await shutdown(ctx) }
+  })
+  await test('scope extended with no explicit extension is the takeover scope: the 48-tool stock surface still resolves', async () => {
+    const { ctx } = await bootHost()
+    try {
+      replacements(ctx)
+      for (const name of ['read', 'glob', 'grep', ...STOCK_UNSUPPORTED_48]) ctx.tools.register(tool(name))
+      const warnings = warningsFrom(ctx)
+      await mount(ctx, { scope: 'extended' })
+      const agent = await mint(ctx, 'extended-stock-48')
+      const assembly = await assemble(ctx, agent)
+      const names = assembly.tools.map(schema => schema.name)
+      for (const name of STOCK_UNSUPPORTED_48) assert.ok(names.includes(name), `${name} must stay visible`)
+      for (const name of ['read', 'glob', 'grep']) assert.equal(names.includes(name), false, `${name} is replaced and hidden`)
+      const hidingWarnings = warnings.filter(message => message.includes('dsh-ops hide-official'))
+      assert.equal(hidingWarnings.length, 1)
+      assert.doesNotMatch(hidingWarnings[0], /READINESS_BLOCKED/)
+      assert.match(hidingWarnings[0], /46 official tools stay visible because they are outside the dsh-ops takeover scope \(shell\/file\/ptc\)/)
+      assert.match(hidingWarnings[0], /2 in-scope official tools stay visible because no registered OPS equivalent exists: edit, write/)
+      assert.equal((await execute(ctx, agent, 'subagent')).isError, false)
+      assert.equal((await execute(ctx, agent, 'write')).isError, false)
+      assert.equal((await execute(ctx, agent, 'read')).isError, true)
+    } finally { await shutdown(ctx) }
+  })
 }
