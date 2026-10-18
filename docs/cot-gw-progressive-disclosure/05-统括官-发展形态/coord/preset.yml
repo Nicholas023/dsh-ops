@@ -1,0 +1,2 @@
+name: 统括官·调度中枢
+description: 为「统括官」定制（独立预设）：**功能分级安放** —— 台面 12 项（read/write/edit/grep/glob/run_code/present/ask_user_question/skill/exit_plan_mode/todo_write/gateway）直接可调，其余功能（检索/看图/子代理/后台任务/目标/计划同步/ralph/workflow）全部在 gateway 抽屉里，功能一个不少；mode=both 让 run_code 与一等工具并存；persona 11 条岗位规则（陈述绑定留痕、卡状态以 state 为准、批量改指向先分类、看板优先 board.mjs、交付必 present、拍板用选择题、核实有据、两套手分工、汇报前自检、台面与抽屉、**接活先立计划**）；另挂 tool-nudge 结果驱动提醒 6 条（含"干了一会儿还没立计划"）。机制文件引用共享包 dsh-cot-gw-static/*（一份机制、零复制；依赖该包存在于「预设向上」的 node_modules，包不在则本预设起不来）。

@@ -1,0 +1,18 @@
+{
+  "name": "dsh-cot-gw-static",
+  "version": "1.1.0",
+  "description": "DSH cot-gw-static mechanism plugins: gateway / tool-gate / tool-watch / skill-search / tool-nudge",
+  "type": "module",
+  "exports": {
+    "./gateway": "./gateway.mjs",
+    "./tool-gate": "./tool-gate.mjs",
+    "./tool-watch": "./tool-watch.mjs",
+    "./skill-search": "./skill-search.mjs",
+    "./skill-search-legacy": "./skill-search-legacy.mjs",
+    "./tool-nudge": "./tool-nudge.mjs",
+    "./tool-nudge-generic": "./tool-nudge-generic.mjs"
+  },
+  "files": [
+    "*.mjs"
+  ]
+}

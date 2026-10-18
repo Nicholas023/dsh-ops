@@ -1,0 +1,2 @@
+name: 网关路由·考公复习
+description: 网关路由模式 · 考公复习变体：台面加 write / edit / ask_user_question / plan_sync，并把 vision_tile_recognize 下放抽屉。共用 cot-gw-static 的四个实现文件，只改 resident。依据两个在跑的考公会话实测：gateway 转发目标 = edit×22、write×11、plan_sync×4、ask_user_question×3，另有 7 次 list/describe 是被迫先查目录；而 vision_tile_recognize 在 1,573 个事件里 0 次使用。

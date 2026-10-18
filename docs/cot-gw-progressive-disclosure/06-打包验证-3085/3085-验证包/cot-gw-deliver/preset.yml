@@ -1,0 +1,2 @@
+name: 网关路由·交付协调
+description: 网关路由模式 · 交付/协调变体：台面加 present。共用 cot-gw-static 的四个实现文件，只改 resident。依据：统括官会话实测 337 次调用里 present 一次没用，而用户明确要求"每个交付物都要在 GUI 里给我链接"。

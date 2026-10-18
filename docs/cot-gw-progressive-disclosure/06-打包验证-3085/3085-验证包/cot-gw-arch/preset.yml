@@ -1,0 +1,2 @@
+name: 网关路由·建筑设计
+description: 网关路由模式 · 建筑设计变体：台面加 read_image / present / run_code。共用 cot-gw-static 的四个实现文件，只改 resident。依据 session-0bf745ec 实测——出图审图、GUI 交付、Python 出图脚本编排三件事都"忘了用就会被立刻察觉"。

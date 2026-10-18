@@ -1,0 +1,2 @@
+name: 网关路由·开发
+description: 网关路由模式 · 开发变体：台面加 run_code。共用 cot-gw-static 的四个实现文件，只改 resident。依据：开发班大量做脚本化构建/迁移/批处理，"忘了用 run_code 就干不了活"。

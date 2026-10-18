@@ -1,0 +1,2 @@
+name: 网关路由·基座
+description: v4.3：gateway+固定工具目录+skill通道；AGENTS.md与全局规则已恢复加载；plan mode（/plan）已挂载；子代理复用链（list_agents/send_message/interrupt_agent）已启用；自动压缩+工具结果修剪已启用
