@@ -7,7 +7,7 @@ import { resolveDiscoveryConfig } from '../config.js'
 import { NativeFileTools } from '../file/runtime.js'
 import { nativeProviders, registerNativeProvider, claimNativeSelection } from '../file/result-provider.js'
 import { ownScopes } from '../scoped-ownership.js'
-import { clearNativePresentationCache, invalidateNativePresentation, isNativePresentation, isPresentationProbe } from '../presentation.js'
+import { clearNativePresentationCache, invalidateNativePresentation, isNativePresentation, isPresentationProbe, layerFingerprint } from '../presentation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { failure, resolveWorker } from '../file/worker.js'
 import { capability } from '../capabilities/registry.js'
@@ -27,6 +27,12 @@ interface Entry {
   owned: Set<string>
   ready: Promise<void>
   releaseSelection?: () => void
+  /** Tool-layer fingerprint at the last observation; changes drive directed
+   * tools/change invalidation. */
+  layers?: string
+  /** Whether the surface was withdrawn because the scope presented ptc-only;
+   * cleared by the symmetric restore branch on the next real assembly. */
+  withdrawn: boolean
 }
 const DISCOVER = publicToolName('discover_tools')
 const advanced = DISCOVERABLE_TOOLS.map(publicToolName)
@@ -69,6 +75,11 @@ export function apply(root: Context, raw: unknown): void {
     }
     const ptcOnly = (assembly: PromptAssembly): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     const native = (agent: Agent): Promise<boolean> => isNativePresentation(prompt, agent)
+    /** Record an agent's current tool-layer fingerprint after any discovery
+     * publish, so the next external tools/change can diff against it. */
+    const rememberLayers = (agent: Agent, entry: Entry): void => {
+      if (entry.ctx) entry.layers = layerFingerprint(agent, scope => tools.schemas(scope))
+    }
     const own = async (agent: Agent, entry: Entry, tool: ToolDefinition): Promise<void> => {
       if (!entry.ctx) return
       const execute = tool.execute
@@ -138,6 +149,7 @@ export function apply(root: Context, raw: unknown): void {
             if (deny.length) entry.disposers.push(entry.ctx.tools.restrict({ deny }))
           }
         } finally { ownership?.end(); mutating = false }
+        for (const [agent, entry] of entries) rememberLayers(agent, entry)
         ownership?.changedBelow()
       }).catch(() => {
         mutating = true
@@ -170,6 +182,7 @@ export function apply(root: Context, raw: unknown): void {
             if (deny.length) child.disposers.push(child.ctx.tools.restrict({ deny }))
           }
         } finally { ownership?.end(); mutating = false }
+        rememberLayers(agent, entry)
         ownership?.changedBelow()
       })
       return chain
@@ -177,7 +190,7 @@ export function apply(root: Context, raw: unknown): void {
     const attach = (agent: Agent): Promise<void> => {
       if (stopped || entries.has(agent) || !agent.ctx) return entries.get(agent)?.ready ?? Promise.resolve()
       const entry: Entry = { runtime: new NativeFileTools({ ctx, config: { ...config, workerPath: worker }, report: undefined }),
-        selected: new Set(), pending: new Set(), disposers: [], owned: new Set(), ready: Promise.resolve() }
+        selected: new Set(), pending: new Set(), disposers: [], owned: new Set(), ready: Promise.resolve(), withdrawn: false }
       entries.set(agent, entry); ownership?.track(agent)
       entry.fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
       entry.ready = Promise.resolve(entry.fiber).then(async () => {
@@ -214,8 +227,29 @@ export function apply(root: Context, raw: unknown): void {
     })
     ctx.on('tools/change', () => {
       if (ownership?.publishing()) return
-      // Any tool registration/restriction change can alter the tools:ptc-only
-      // section; the cached native verdicts must be recomputed to stay faithful.
+      // Directed invalidation: only an agent whose tool-layer fingerprint moved
+      // can have a different tools:ptc-only section. Unchanged agents keep the
+      // cached verdict, so a session-shells bash registration for one new
+      // session neither re-probes nor re-assembles every active agent.
+      for (const [agent, entry] of entries) {
+        if (!entry.ctx) continue
+        const current = layerFingerprint(agent, scope => tools.schemas(scope))
+        if (entry.layers !== undefined && current !== entry.layers) invalidateNativePresentation(agent)
+        entry.layers = current
+      }
+      void reconcile()
+    })
+    ctx.on('system-prompt/change', () => {
+      if (ownership?.publishing()) return
+      // Preview sections, variables and contexts change through
+      // system-prompt/change and not via tools/change; a ptc-only section
+      // appearing or vanishing there must re-verify every cached verdict.
+      for (const agent of entries.keys()) invalidateNativePresentation(agent)
+      void reconcile()
+    })
+    ctx.on('app-boot/config-reload', () => {
+      // Host configuration reloads can rewrite prompt-visible inputs
+      // (settings.describe() sections and similar); drop every verdict.
       for (const agent of entries.keys()) invalidateNativePresentation(agent)
       void reconcile()
     })
@@ -232,13 +266,26 @@ export function apply(root: Context, raw: unknown): void {
       // this request still contains an already-rendered Native SDK section.
       const heldNative = Boolean(entry?.owned.size)
       const result = await next()
-      if (!entry || !heldNative || !ptcOnly(result)) return result
-      mutating = true
-      try { entry.runtime.cancel('Native presentation withdrawn'); clear(entry) }
-      finally { mutating = false }
-      // Rebuild through the public host service after removing only our tools.
-      // This cannot activate pending requests or rewrite another provider's text.
-      return prompt.assemble(context)
+      if (!entry) return result
+      if (heldNative && ptcOnly(result)) {
+        mutating = true
+        try { entry.runtime.cancel('Native presentation withdrawn'); entry.withdrawn = true; clear(entry) }
+        finally { mutating = false }
+        // Rebuild through the public host service after removing only our tools.
+        // This cannot activate pending requests or rewrite another provider's text.
+        return prompt.assemble(context)
+      }
+      // Symmetric restore: a real assembly is a fresh view of the pinned prompt.
+      // When the ptc-only section has vanished from a scope we withdrew, drop
+      // the stale verdict and republish through the single-agent path (never a
+      // full reconcile). This is the only recovery from presentation changes
+      // (e.g. presentAs lifts) that emit no tools/change or system-prompt/change.
+      if (entry.withdrawn && !ptcOnly(result)) {
+        entry.withdrawn = false
+        invalidateNativePresentation(context.scope as Agent)
+        void reconcileAgent(context.scope as Agent)
+      }
+      return result
     })
     ctx.on('session/event', (session, event) => {
       if (event.type === 'step/end') {
