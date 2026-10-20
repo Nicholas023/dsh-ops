@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Cache each agent's native-presentation probe and reconcile discovery incrementally: attaching, stepping or disposing an agent no longer re-assembles the full system prompt for every active agent. A cached verdict is invalidated on `tools/change` (tool-set changes are the only input that can alter the `tools:ptc-only` section) and on agent disposal, so a scope flipping between native and PTC-only still publishes or withdraws `discover_tools` correctly (#333).
+- 每个 agent 的 native 呈现探测改为带缓存，discovery 的 reconcile 改为增量：新挂载、每步执行或销毁一个 agent 时，不再为全部活跃 agent 重新组装完整系统提示词。`tools/change`（唯一可能改变 `tools:ptc-only` 段的输入）与 agent 销毁时会使缓存失效，因此 scope 在 native 与 PTC-only 之间翻转时 `discover_tools` 的发布/撤回仍然正确（#333）。
+
 ## [0.4.1] — 2026-10-20 — Update locks stop leaving files behind
 
 - Stop the update lock from leaving `.dsh-ops-update-*.lock` sidecars behind (#319). The writer that takes the lock removes it on release, and only after proving the name still leads to the inode it locked, so a waiter that opened the old inode can never publish under it. A published write, a request refused after the lock and a directory-wide `replace` now leave the directory exactly as they found it; a sidecar left by a killed writer is not a stuck lock — the next write of that name binds to it, publishes under it and removes it.
