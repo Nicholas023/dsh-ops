@@ -205,6 +205,34 @@ export async function discoveryMountChecks() {
       assert.ok(scopedToolNames(ctx, agent).includes(publicToolName('stat')))
     } finally { await shutdown(ctx) }
   }))
+  await test('incremental reconcile: attaching an agent assembles once regardless of how many agents are active', () => withTempDir('discovery', async dir => {
+    const { ctx } = await boot()
+    try {
+      let assembles = 0
+      ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { assembles++; return next() })
+      for (let i = 0; i < 4; i++) {
+        const before = assembles
+        await mint(ctx, `discovery-incr-${i}`, dir)
+        await waitFor(() => assembles === before + 1, { what: `attach agent ${i} adds exactly one assembly` })
+      }
+      assert.equal(assembles, 4, 'four agents cost exactly four native probes, not O(N^2)')
+    } finally { await shutdown(ctx) }
+  }))
+  await test('tools/change invalidates cached native verdicts and recomputes without republishing an unchanged surface', () => withTempDir('discovery', async dir => {
+    const { ctx } = await boot()
+    try {
+      let assembles = 0
+      ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { assembles++; return next() })
+      const agent = await mint(ctx, 'discovery-tools-change', dir)
+      const stable = ctx.get('tools').get(DISCOVER, agent)
+      assert.ok(stable, 'surface is published before the change')
+      const before = assembles
+      ctx.tools.register({ name: 'glob', description: 'glob', parameters: { type: 'object' }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
+      await waitFor(() => assembles === before + 1, { what: 'tools/change re-assembles the scoped probe' })
+      assert.equal(assembles, before + 1, 'exactly one recomputation for the single active agent')
+      assert.equal(ctx.get('tools').get(DISCOVER, agent), stable, 'an unrelated registration must not republish the surface')
+    } finally { await shutdown(ctx) }
+  }))
 }
 
 export { boot as bootDiscoveryHost, mint as mintDiscoveryAgent, nextStep as discoveryNextStep }
