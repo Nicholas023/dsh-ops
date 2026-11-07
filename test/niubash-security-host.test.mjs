@@ -221,31 +221,39 @@ try {
       } catch (error) {
         lines.push(`PROBE node write=blocked code=${error.code} ${error.message}`)
       }
-      // P2 — what the ACLs actually say on the target, its parent, and the workspace.
-      acl('PROBE icacls outside', outside)
-      acl('PROBE icacls outside parent', path.dirname(outside))
-      acl('PROBE icacls workspace root', root)
-      // P3 — which cwd and execution tree the real tool hands the child. A node
-      // helper is used so that a niu failure cannot mask the cwd question.
+      // P2 — a brand-new sibling directory under the same parent. A directory the
+      // harness just created carries no history, so a denial here can only come
+      // from the parent's inheritance, never from anything a previous test did.
+      const fresh = path.join(path.dirname(outside), 'probe-fresh')
+      fs.rmSync(fresh, { recursive: true, force: true })
+      fs.mkdirSync(fresh)
+      const childWrite = await call(node(`const fs=require('node:fs');const path=require('node:path');
+try { fs.writeFileSync(path.join(process.cwd(),'child.txt'),'x'); process.stdout.write('child write=ok') }
+catch (error) { process.stdout.write('child write=blocked '+error.code) }`), { workdir: fresh })
+      lines.push(`PROBE spawned-child ${childWrite.stdout.text || childWrite.stderr.text}`)
+      const freshNiu = await call('printf x > fresh.txt', { workdir: fresh })
+      lines.push(`PROBE niu in brand-new sibling exit=${freshNiu.exitCode} stderr=${JSON.stringify(freshNiu.stderr.text)}`)
+      const targetNiu = await call('printf x > outside.txt', { workdir: outside })
+      lines.push(`PROBE niu in outside exit=${targetNiu.exitCode} stderr=${JSON.stringify(targetNiu.stderr.text)}`)
+      // P3 — read the ACLs again AFTER the calls above. The previous probe only
+      // sampled before them, so a deny applied and revoked inside one call would
+      // have been invisible.
+      acl('PROBE after icacls outside', outside)
+      acl('PROBE after icacls outside parent', path.dirname(outside))
+      acl('PROBE after icacls fresh sibling', fresh)
+      const token = await call(node(`const {execFileSync}=require('node:child_process');
+const text=execFileSync('whoami',['/groups'],{encoding:'utf8'});
+process.stdout.write(text.split(String.fromCharCode(10)).filter(line=>/Mandatory|Administrators|restricted/i.test(line)).join(' | '))`), { workdir: outside })
+      lines.push(`PROBE child groups ${token.stdout.text || token.stderr.text}`)
+      // P4 — which cwd and execution tree the real tool hands the child.
       const info = await call(node('process.stdout.write(JSON.stringify({cwd:process.cwd(),niu:process.env.NIU_ROOT||null}))'), { workdir: outside })
       lines.push(`PROBE child exit=${info.exitCode} ${info.stdout.text || info.stderr.text}`)
       try {
         const tree = path.dirname(String(JSON.parse(info.stdout.text).niu))
         lines.push(`PROBE exec tree=${tree}`)
-        acl('PROBE icacls exec tree', tree)
         acl('PROBE icacls exec tree parent', path.dirname(tree))
       } catch (error) {
         lines.push(`PROBE exec tree unresolved: ${error.message}`)
-      }
-      // P4 — the same redirect, relative versus absolute. A relative target only
-      // proves anything about the cwd when the absolute form of the same write
-      // works; if both are blocked the directory itself has lost write access.
-      const relative = await call('printf full > probe-rel.txt', { workdir: outside })
-      lines.push(`PROBE niu relative exit=${relative.exitCode} stderr=${JSON.stringify(relative.stderr.text)}`)
-      const absolute = await call(`printf full > ${quote(path.join(outside, 'probe-abs.txt'))}`, { workdir: root })
-      lines.push(`PROBE niu absolute exit=${absolute.exitCode} stderr=${JSON.stringify(absolute.stderr.text)}`)
-      for (const name of ['probe-rel.txt', 'probe-abs.txt']) {
-        try { fs.unlinkSync(path.join(outside, name)) } catch { /* absent is the expected case */ }
       }
       console.log(lines.join('\n'))
     }
