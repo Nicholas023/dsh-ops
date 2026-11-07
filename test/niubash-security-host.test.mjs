@@ -241,9 +241,15 @@ catch (error) { process.stdout.write('child write=blocked '+error.code) }`), { w
       acl('PROBE after icacls outside', outside)
       acl('PROBE after icacls outside parent', path.dirname(outside))
       acl('PROBE after icacls fresh sibling', fresh)
+      // `whoami` is named by absolute path: the tool prepends the execution tree to
+      // PATH, so a bare `whoami` resolves to the Unix build inside the payload,
+      // which rejects `/groups` as an extra operand.
       const token = await call(node(`const {execFileSync}=require('node:child_process');
-const text=execFileSync('whoami',['/groups'],{encoding:'utf8'});
-process.stdout.write(text.split(String.fromCharCode(10)).filter(line=>/Mandatory|Administrators|restricted/i.test(line)).join(' | '))`), { workdir: outside })
+const {win32}=require('node:path');
+const exe=win32.join(process.env.SystemRoot||'C:/Windows','System32','whoami.exe');
+try{process.stdout.write(execFileSync(exe,['/groups'],{encoding:'utf8'})
+.split(String.fromCharCode(10)).filter(line=>/Mandatory|Administrators|restricted/i.test(line)).join(' | '))}
+catch(error){process.stdout.write('whoami unavailable '+error.code)}`), { workdir: outside })
       lines.push(`PROBE child groups ${token.stdout.text || token.stderr.text}`)
       // P4 — which cwd and execution tree the real tool hands the child.
       const info = await call(node('process.stdout.write(JSON.stringify({cwd:process.cwd(),niu:process.env.NIU_ROOT||null}))'), { workdir: outside })
