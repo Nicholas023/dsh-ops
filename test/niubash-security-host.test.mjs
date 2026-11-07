@@ -1,6 +1,8 @@
 import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
+// TEMPORARY CI probe (#745): reads directory ACLs without changing them.
+import { execFileSync } from 'node:child_process'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
@@ -192,6 +194,61 @@ try {
     const denied = await ptc('printf blocked > ptc-readonly.txt')
     assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'ptc-readonly.txt')), false)
     agent.session.mode = 'danger-full-access'
+    // ───── TEMPORARY CI PROBE — removed before this branch is ever reviewed ─────
+    // Evidence collection for the windows-latest-only `niu: line 1: full.txt:
+    // Permission denied` seen in #730 and #745. It is deliberately NOT a test():
+    // adding a check would change the suite total and break the consumer's
+    // `all 11 checks passed` assertion, which would hide the real signal.
+    // Everything here is diagnostic; the control flow below is unchanged.
+    {
+      const lines = []
+      // Print one directory's DACL on a single line so the CI log stays greppable.
+      const acl = (label, target) => {
+        try {
+          lines.push(`${label}: ${execFileSync('icacls.exe', [target], { encoding: 'utf8' }).trim().replace(/\s+/gu, ' ')}`)
+        } catch (error) {
+          lines.push(`${label}: icacls ERROR ${error.message}`)
+        }
+      }
+      lines.push(`PROBE outside=${outside} exists=${fs.existsSync(outside)} mode=${agent.session.mode}`)
+      // P1 — the operating system, with niu out of the picture: can this ordinary
+      // process create a file in the directory the failing command targets?
+      const probeFile = path.join(outside, `probe-node-${process.pid}.txt`)
+      try {
+        fs.writeFileSync(probeFile, 'probe')
+        lines.push('PROBE node write=ok')
+        fs.unlinkSync(probeFile)
+      } catch (error) {
+        lines.push(`PROBE node write=blocked code=${error.code} ${error.message}`)
+      }
+      // P2 — what the ACLs actually say on the target, its parent, and the workspace.
+      acl('PROBE icacls outside', outside)
+      acl('PROBE icacls outside parent', path.dirname(outside))
+      acl('PROBE icacls workspace root', root)
+      // P3 — which cwd and execution tree the real tool hands the child. A node
+      // helper is used so that a niu failure cannot mask the cwd question.
+      const info = await call(node('process.stdout.write(JSON.stringify({cwd:process.cwd(),niu:process.env.NIU_ROOT||null}))'), { workdir: outside })
+      lines.push(`PROBE child exit=${info.exitCode} ${info.stdout.text || info.stderr.text}`)
+      try {
+        const tree = path.dirname(String(JSON.parse(info.stdout.text).niu))
+        lines.push(`PROBE exec tree=${tree}`)
+        acl('PROBE icacls exec tree', tree)
+        acl('PROBE icacls exec tree parent', path.dirname(tree))
+      } catch (error) {
+        lines.push(`PROBE exec tree unresolved: ${error.message}`)
+      }
+      // P4 — the same redirect, relative versus absolute. A relative target only
+      // proves anything about the cwd when the absolute form of the same write
+      // works; if both are blocked the directory itself has lost write access.
+      const relative = await call('printf full > probe-rel.txt', { workdir: outside })
+      lines.push(`PROBE niu relative exit=${relative.exitCode} stderr=${JSON.stringify(relative.stderr.text)}`)
+      const absolute = await call(`printf full > ${quote(path.join(outside, 'probe-abs.txt'))}`, { workdir: root })
+      lines.push(`PROBE niu absolute exit=${absolute.exitCode} stderr=${JSON.stringify(absolute.stderr.text)}`)
+      for (const name of ['probe-rel.txt', 'probe-abs.txt']) {
+        try { fs.unlinkSync(path.join(outside, name)) } catch { /* absent is the expected case */ }
+      }
+      console.log(lines.join('\n'))
+    }
     ok(await call('printf full > full.txt', { workdir: outside }))
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
   })
